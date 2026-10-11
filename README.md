@@ -65,7 +65,7 @@ This patch replaces the hard-coded demo response with a real **read-only reposit
 
 ## Git hygiene: do this before pushing
 
-Your existing GitHub repo currently shows `.env` and a SQLite database as tracked files. `.gitignore` does **not** automatically untrack files already committed. Review them:
+If `.env` or a local SQLite database has been committed, adding it to `.gitignore` does **not** remove it from existing commits. Review the tracked files:
 ```powershell
 git ls-files .env agent_execution_logs.db
 ```
