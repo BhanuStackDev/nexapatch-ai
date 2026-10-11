@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime data and logs
+*.db
+*.sqlite
+*.sqlite3
+/data/
+*.log
+
+# Node
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+
+# NexaPatch local secrets and generated files
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+**/__pycache__/
+data/
+*.before-*
+*.backup
