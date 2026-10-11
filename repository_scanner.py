@@ -10,6 +10,7 @@ import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from secret_redaction import redact_secrets
 
 IGNORED_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules",
@@ -202,6 +203,7 @@ def scan_repository(
             if b"\x00" in raw[:4_096]:
                 continue
             content = raw.decode("utf-8", errors="replace")
+            content = redact_secrets(content)
             if len(content) > max_file_chars:
                 # Preserve both imports/configuration and routes/classes at the end
                 # of long files rather than silently sending only the first lines.
