@@ -1,0 +1,1 @@
+"""Sample source package for the NexaPatch inspection demo."""
