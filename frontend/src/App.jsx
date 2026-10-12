@@ -33,7 +33,7 @@ function SectionTitle({ icon: Icon, title, trailing }) {
 const NEXAPATCH_UI_LABELS = Array.from(new Set([
   'ENGINEERING WORKSPACE', 'Agent console', 'Repository', 'Run history', 'recent runs',
   'Read-only mode', 'Phase 1 can inspect and plan. It cannot edit or execute your project code.',
-  'Workspace protected', 'Personal environment', 'Developer mode', 'Local build · v0.1.0',
+  'Workspace protected', 'Personal environment', 'Developer mode', 'Local build · v0.2.0',
   'Workspace', 'Local workspace', 'WORKSPACE', 'LOCAL ENVIRONMENT', 'AI SOFTWARE ENGINEERING',
   'Good work starts with understanding.',
   'Good work starts with', 'understanding.',
@@ -129,7 +129,7 @@ const NEXAPATCH_LOCAL_HI_TRANSLATIONS = {
   "Workspace protected": "वर्कस्पेस सुरक्षित है",
   "Personal environment": "व्यक्तिगत वातावरण",
   "Developer mode": "डेवलपर मोड",
-  "Local build · v0.1.0": "लोकल बिल्ड · v0.1.0",
+  "Local build · v0.2.0": "लोकल बिल्ड · v0.2.0",
   "Workspace": "वर्कस्पेस",
   "Local workspace": "लोकल वर्कस्पेस",
   "WORKSPACE": "वर्कस्पेस",
@@ -980,7 +980,7 @@ export default function App() {
           <p>Phase 1 can inspect and plan. It cannot edit or execute your project code.</p>
           <span className="safety-tag"><span /> Workspace protected</span>
         </div>
-        <div className="sidebar-footer"><span className="avatar">BU</span><div><strong>Developer mode</strong><span>Local build · v0.1.0</span></div><span className="footer-dots">•••</span></div>
+        <div className="sidebar-footer"><span className="avatar">BU</span><div><strong>Developer mode</strong><span>Local build · v0.2.0</span></div><span className="footer-dots">•••</span></div>
       </aside>
 
       <main className="main-content" id="top">
