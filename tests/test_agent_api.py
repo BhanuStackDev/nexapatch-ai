@@ -176,3 +176,199 @@ def test_run_agent_can_return_scan_only_when_key_is_missing(
     assert body["status"] == "scan_only"
     assert body["ai_used"] is False
     assert body["mutations_performed"] == 0
+
+# DEPLOYMENT_READINESS_LOCALIZATION_TESTS
+
+def test_localize_ui_returns_english_labels_without_provider(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(agent_module, "GROQ_API_KEY", "")
+    labels = {"Agent console": "Agent console", "Run history": "Run history"}
+
+    response = client.post(
+        "/api/localize-ui",
+        json={"target_language": "English", "labels": labels},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["labels"] == labels
+    assert body["direction"] == "ltr"
+    assert body["model"] is None
+    assert body["translation_warning"] == ""
+
+
+def test_localize_ui_rejects_empty_labels(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/localize-ui",
+        json={"target_language": "Hindi", "labels": {}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_localize_ui_rejects_too_many_labels(
+    client: TestClient,
+) -> None:
+    labels = {
+        f"Label {index}": f"Value {index}"
+        for index in range(agent_module.MAX_UI_LABELS + 1)
+    }
+
+    response = client.post(
+        "/api/localize-ui",
+        json={"target_language": "Hindi", "labels": labels},
+    )
+
+    assert response.status_code == 422
+
+
+def test_localize_ui_rejects_oversized_label(
+    client: TestClient,
+) -> None:
+    labels = {"Label": "x" * (agent_module.MAX_UI_LABEL_LENGTH + 1)}
+
+    response = client.post(
+        "/api/localize-ui",
+        json={"target_language": "Hindi", "labels": labels},
+    )
+
+    assert response.status_code == 422
+
+
+def test_localize_ui_requires_provider_for_non_english(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(agent_module, "GROQ_API_KEY", "")
+
+    response = client.post(
+        "/api/localize-ui",
+        json={
+            "target_language": "Hindi",
+            "labels": {"Agent console": "Agent console"},
+        },
+    )
+
+    assert response.status_code == 503
+
+
+def test_localize_ui_returns_cached_translation_without_provider_call(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    labels = {"Agent console": "Agent console", "Run history": "Run history"}
+    translated = {
+        "Agent console": "Agent console translated",
+        "Run history": "Run history translated",
+    }
+    cache_key = agent_module.translation_cache_key("Hindi", labels)
+
+    monkeypatch.setattr(agent_module, "GROQ_API_KEY", "test-key-not-a-real-secret")
+    monkeypatch.setattr(agent_module, "GROQ_MODEL", "test-model")
+    monkeypatch.setattr(
+        agent_module,
+        "UI_TRANSLATION_CACHE",
+        agent_module.OrderedDict([(cache_key, translated)]),
+    )
+
+    response = client.post(
+        "/api/localize-ui",
+        json={"target_language": "Hindi", "labels": labels},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["labels"] == translated
+    assert body["cached"] is True
+    assert body["model"] == "test-model"
+
+# DEPLOYMENT_READINESS_API_AUTH_TESTS
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("post", "/api/run-agent", {"request_text": "Inspect this repository safely."}),
+        ("post", "/api/localize-ui", {
+            "target_language": "Hindi",
+            "labels": {"Agent console": "Agent console"},
+        }),
+        ("get", "/api/runs?limit=1", None),
+    ],
+)
+def test_sensitive_routes_reject_missing_bearer_token(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None,
+) -> None:
+    monkeypatch.setattr(
+        agent_module, "NEXAPATCH_API_TOKEN", "deployment-test-token"
+    )
+
+    response = getattr(client, method)(
+        path,
+        **({"json": payload} if payload is not None else {}),
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "Bearer wrong-test-token",
+        "Basic deployment-test-token",
+        "Bearer",
+    ],
+)
+def test_sensitive_route_rejects_invalid_authorization(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    authorization: str,
+) -> None:
+    monkeypatch.setattr(
+        agent_module, "NEXAPATCH_API_TOKEN", "deployment-test-token"
+    )
+
+    response = client.get(
+        "/api/runs?limit=1",
+        headers={"Authorization": authorization},
+    )
+
+    assert response.status_code == 401
+
+
+def test_valid_bearer_token_allows_run_history(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        agent_module, "NEXAPATCH_API_TOKEN", "deployment-test-token"
+    )
+    configure_test_storage(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/api/runs?limit=1",
+        headers={"Authorization": "Bearer deployment-test-token"},
+    )
+
+    assert response.status_code == 200
+    assert "runs" in response.json()
+
+
+def test_health_reports_when_authentication_is_required(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_module, "NEXAPATCH_API_TOKEN", "deployment-test-token"
+    )
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["auth_required"] is True

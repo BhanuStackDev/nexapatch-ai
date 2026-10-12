@@ -768,6 +768,11 @@ function NexaPatchWelcomeAndExit({ translations = {} }) {
 
 export default function App() {
   const [health, setHealth] = useState(null);
+  // NEXAPATCH_SESSION_TOKEN_UI_V1
+  // Keep credentials in React memory only, never in browser storage.
+  const [apiToken, setApiToken] = useState('');
+  const [apiTokenInput, setApiTokenInput] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
   const [task, setTask] = useState(DEFAULT_TASK);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -862,7 +867,10 @@ export default function App() {
 
         const response = await fetch(`${API_BASE}/api/localize-ui`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
+          },
           body: JSON.stringify({ target_language: targetLanguage, labels }),
           signal: controller.signal,
         });
@@ -897,7 +905,7 @@ export default function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [languageMode, responseLanguage, autoUiLanguage]);
+  }, [languageMode, responseLanguage, autoUiLanguage, apiToken]);
   // NEXAPATCH_UI_LANGUAGE_INDEPENDENT_V1
   // Do not switch the whole interface based on task text. The UI language stays based on the browser locale
   // (or an explicit UI language choice); runAgent detects the task language separately for the AI response.
@@ -914,18 +922,28 @@ export default function App() {
 
   const loadHistory = useCallback(async () => {
     try {
-      const response = await fetchJson(`${API_BASE}/api/runs?limit=6`);
+      const response = await fetchJson(`${API_BASE}/api/runs?limit=6`, {
+        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
+      });
       setHistory(response.runs || []);
-    } catch {
+      if (apiToken) setAuthMessage('Access token accepted.');
+    } catch (err) {
       setHistory([]);
+      if (apiToken) {
+        setAuthMessage(err.message || 'Backend access was denied.');
+      }
     }
-  }, []);
+  }, [apiToken]);
 
   useEffect(() => { loadHealth(); loadHistory(); }, [loadHealth, loadHistory]);
 
   const runAgent = async (event) => {
     event.preventDefault();
     if (task.trim().length < 5 || loading) return;
+    if (health?.auth_required && !apiToken) {
+      setError('Enter the backend access token above before running analyses.');
+      return;
+    }
     setLoading(true);
     setError('');
     setResult(null);
@@ -933,6 +951,7 @@ export default function App() {
     try {
       const response = await fetchJson(`${API_BASE}/api/run-agent`, {
         method: 'POST',
+        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
         body: JSON.stringify({ request_text: task.trim(), detected_language: nexapatchDetectLanguageFromText(task.trim()) || nexapatchBrowserLanguageName(), language_mode: languageMode, response_language: languageMode === 'manual' ? (responseLanguage.trim() || 'English') : null }),
       });
       setResult(response);
@@ -990,6 +1009,100 @@ export default function App() {
         </header>
 
         <div className="page-container">
+          {health?.auth_required && (
+            <section
+              aria-label="Backend access"
+              style={{
+                marginBottom: 18,
+                padding: 14,
+                border: '1px solid #d6deea',
+                borderRadius: 12,
+                background: '#ffffff',
+                color: '#182230',
+              }}
+            >
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const candidate = apiTokenInput.trim();
+                  if (!candidate) {
+                    setAuthMessage('Paste the backend access token first.');
+                    return;
+                  }
+                  setApiToken(candidate);
+                  setApiTokenInput('');
+                  setAuthMessage('Checking access...');
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <label htmlFor="nexapatch-api-token"
+                  style={{ fontSize: 13, fontWeight: 600 }}>
+                  Backend access token
+                </label>
+                <input
+                  id="nexapatch-api-token"
+                  type="password"
+                  value={apiTokenInput}
+                  onChange={(event) => setApiTokenInput(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Paste deployment token"
+                  style={{
+                    flex: '1 1 220px',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                    padding: '10px 12px',
+                    border: '1px solid #c7d0dc',
+                    borderRadius: 8,
+                    color: '#182230',
+                    background: '#ffffff',
+                  }}
+                />
+                <button type="submit" disabled={!apiTokenInput.trim()}
+                  style={{
+                    padding: '10px 14px',
+                    border: 0,
+                    borderRadius: 8,
+                    background: '#182230',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                  }}>
+                  Connect
+                </button>
+                {apiToken && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiToken('');
+                      setApiTokenInput('');
+                      setHistory([]);
+                      setAuthMessage('Access token cleared from this tab.');
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      border: '1px solid #c7d0dc',
+                      borderRadius: 8,
+                      background: '#ffffff',
+                      color: '#182230',
+                      cursor: 'pointer',
+                    }}>
+                    Disconnect
+                  </button>
+                )}
+              </form>
+              <p role="status" style={{ margin: '10px 0 0', fontSize: 13 }}>
+                {authMessage || 'Enter your backend access token to use protected API features.'}
+              </p>
+              <p style={{ margin: '6px 0 0', color: '#526174', fontSize: 12 }}>
+                The token stays in page memory and is not saved to browser storage. Reloading the page clears it.
+              </p>
+            </section>
+          )}
           <NexaPatchWelcomeAndExit translations={translations} />
             <section className="welcome-row">
             <div><div className="eyebrow"><Sparkles size={14} /> AI SOFTWARE ENGINEERING</div><h1>Good work starts with <span>understanding.</span></h1><p className="page-subtitle">Inspect a real codebase, map its architecture, and turn your goal into an evidence-based implementation plan.</p></div>
