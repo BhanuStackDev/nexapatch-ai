@@ -1,93 +1,336 @@
-# NexaPatch — Phase 1 Foundation
+# NexaPatch AI
 
-This patch replaces the hard-coded demo response with a real **read-only repository scanner**, a **LangGraph workflow**, optional **Groq AI planning**, and a frontend connected to the FastAPI backend.
+### AI-Assisted Repository Inspection & Planning
 
-## What this phase includes
+NexaPatch AI is a developer-focused tool that inspects a local code repository, selects relevant source context, and generates an AI-assisted plan for understanding the codebase. It combines a React dashboard, FastAPI backend, repository scanning, secret-redaction safeguards, and a LangGraph workflow with optional Groq-powered AI planning.
 
-- Read-only file discovery in a configured local workspace.
-- Exclusion of common generated/dependency directories and common secret/config files (`.env`, key/certificate files, databases, etc.).
-- Bounded source-context selection; it does not send the entire repository to the model.
-- LangGraph nodes for repository inspection and AI planning.
-- Groq OpenAI-compatible chat completions with configurable model ID.
-- SQLite run history stored in ignored local `data/agent_runs.db`.
-- React dashboard that uses real API calls and reports actual scan/AI status.
-- Unit tests for scanner behavior.
+The current version focuses on **read-only repository inspection and planning**. It does not automatically modify source files or execute shell commands.
 
-**Not included yet:** code editing, shell command execution, test execution against target repositories, Git changes, multi-user authentication, and streaming. The backend binds to loopback for local development. Do not expose this API to the public internet as-is.
+## Overview
 
-## Apply to your existing repository (Windows PowerShell)
+Understanding an unfamiliar repository can be time-consuming. Developers often need to identify important files, understand the project structure, and gather relevant context before planning changes.
 
-1. Open your local `nexapatch-ai` repository folder and create a branch:
-   ```powershell
-   git checkout -b feat/real-repository-inspection
-   ```
-2. Back up or commit your current work. Extract this ZIP directly into the repository root and choose **merge/replace** for the supplied files. The ZIP mirrors the repo layout: `agent.py`, `repository_scanner.py`, `requirements.txt`, `.gitignore`, `frontend/src/App.jsx`, `frontend/src/index.css`, and `tests/`.
-3. Create/update your local `.env` file. Since your current repo already has a `.env`, open that file and update the values instead of assuming copying the example will overwrite it:
-   ```env
-   GROQ_API_KEY=your_real_groq_api_key_here
-   GROQ_MODEL=qwen/qwen3.8-27b
-   GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
-   TARGET_REPO_PATH=.
-   CONVERSAI_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-   ```
-   Use your own key from Groq's console. **Never** put the key in a React file or commit `.env`. If you want to inspect another local repository, point `TARGET_REPO_PATH` to that folder. Relative paths are resolved from the terminal's current working directory, so run the backend from the repository root for `TARGET_REPO_PATH=.`.
-4. From the repository root, install the backend dependencies and run the scanner tests:
-   ```powershell
-   py -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   python -m pytest tests -q
-   ```
-5. Start the backend from the repository root:
-   ```powershell
-   python -m uvicorn agent:app --reload --host 127.0.0.1 --port 8001
-   ```
-6. Open a **second terminal** and start the frontend:
-   ```powershell
-   cd frontend
-   npm install
-   npm run dev
-   ```
-   Open the local Vite URL shown in the terminal (usually `http://localhost:5173`). The default frontend API URL is `http://127.0.0.1:8001`; you can override it with `frontend/.env.local`:
-   ```env
-   VITE_API_URL=http://127.0.0.1:8001
-   ```
+NexaPatch AI provides a foundation for this workflow by scanning a configured local workspace, selecting bounded source context, and presenting the scan and planning results through a web dashboard.
 
-## API endpoints
+### Key Features
 
-- `GET /api/health` — backend, workspace and model configuration status.
-- `POST /api/run-agent` — scan the configured repository and produce an AI plan when a Groq key is configured.
-- `GET /api/runs?limit=10` — recent scan history.
-- `GET /docs` — interactive OpenAPI docs.
+- **Repository inspection:** Discover relevant files in a configured local workspace.
+- **Read-only scanning:** Inspect a codebase without modifying files in the target repository.
+- **Context selection:** Select bounded source context instead of sending the entire repository to the AI model.
+- **Secret-redaction safeguards:** Exclude common secret/configuration files and attempt to redact common secret patterns from selected context.
+- **LangGraph workflow:** Organize repository inspection and AI planning into workflow nodes.
+- **Optional AI planning:** Use Groq's OpenAI-compatible chat completions API with configurable model settings.
+- **React dashboard:** View real backend responses and the actual scan/AI execution status.
+- **Run history:** Store local execution history in SQLite.
+- **REST API:** Expose endpoints for health checks, agent runs, and run history.
+- **Automated tests:** Validate important repository-scanner and backend behaviors.
+- **Dependency checks:** Audit frontend dependencies for known vulnerabilities.
 
-`status=scan_only` means repository scanning worked but an AI key is missing. `status=ai_error` means planning failed. Neither should be presented as a successful AI run. Every response states `read_only=true` and `mutations_performed=0`.
+## How It Works
 
-## Git hygiene: do this before pushing
+1. The user opens the NexaPatch dashboard.
+2. The FastAPI backend loads the configured workspace.
+3. The repository scanner discovers files and applies configured exclusions.
+4. Relevant source context is selected within configured bounds, with secret-redaction safeguards applied.
+5. The LangGraph workflow runs repository inspection and, when configured, AI planning.
+6. The backend returns the execution status and results to the dashboard.
+7. Run history is stored locally in SQLite.
 
-If `.env` or a local SQLite database has been committed, adding it to `.gitignore` does **not** remove it from existing commits. Review the tracked files:
-```powershell
-git ls-files .env agent_execution_logs.db
-```
-If `.env` is tracked, untrack it while preserving your local copy:
-```powershell
-git rm --cached .env
-```
-If the SQLite DB is tracked, back it up if needed and untrack it:
-```powershell
-git rm --cached agent_execution_logs.db
-```
-If a real API key was ever committed, revoke/rotate it. Then review the diff before committing:
-```powershell
-git status --short
-git diff --check
-git diff
+AI planning requires valid provider configuration. If AI planning is unavailable or fails, the application reports the corresponding status instead of treating the run as a successful AI result.
+
+## Architecture
+
+```text
+┌─────────────────────────┐
+│   React + Vite UI       │
+│   Repository Dashboard  │
+└────────────┬────────────┘
+             │ HTTP / REST
+             ▼
+┌─────────────────────────┐
+│      FastAPI Backend    │
+│   Health / Agent / Runs │
+└────────────┬────────────┘
+             ▼
+┌─────────────────────────┐
+│   Repository Scanner    │
+│  File Discovery &       │
+│  Context Selection      │
+└────────────┬────────────┘
+             ▼
+┌─────────────────────────┐
+│   LangGraph Workflow    │
+│ Inspection → AI Planning│
+└────────────┬────────────┘
+             │ Optional provider request
+             ▼
+┌─────────────────────────┐
+│  Groq API / Configured  │
+│       AI Model          │
+└─────────────────────────┘
+
+Local run history → SQLite
 ```
 
-## Provider/model configuration
+## Technology Stack
 
-The example model is `qwen/qwen3.8-27b`. Model availability changes, so check Groq's official supported-model list and choose an active model available for your account: https://console.groq.com/docs/models
+| Component | Technologies |
+|---|---|
+| Frontend | React, Vite, JavaScript, CSS |
+| Backend | Python, FastAPI, Uvicorn |
+| AI workflow | LangGraph |
+| AI provider | Groq OpenAI-compatible API |
+| Repository inspection | Python file scanning and context selection |
+| Secret safeguards | Secret-pattern detection and redaction |
+| Run history | SQLite |
+| Testing | Pytest |
+| Frontend dependency management | npm |
 
-## Security note
+## Project Structure
 
-The scanner tries to exclude common secret files, but secrets can also be embedded in ordinary source files. Review the selected files and never point the tool at a sensitive repository without understanding that selected source context is sent to the configured AI provider. This is a local-development portfolio foundation, not a production-safe remote service. Phase 2 must add sandboxed writes/execution and stronger authorization before any code-editing feature is enabled.
+```text
+nexapatch-ai/
+├── .github/
+│   └── workflows/              # GitHub Actions workflows
+├── frontend/
+│   ├── src/                    # React application source
+│   ├── package.json
+│   ├── package-lock.json
+│   └── index.html
+├── tests/                      # Automated backend tests
+├── .env.example                # Example environment configuration
+├── .gitignore
+├── agent.py                    # FastAPI application and AI workflow
+├── repository_scanner.py       # Repository discovery and context selection
+├── secret_redaction.py         # Secret-redaction utilities
+├── requirements.txt            # Python dependencies
+└── README.md
+```
+
+## Getting Started
+
+### Prerequisites
+
+Install the following before running the project:
+
+- Python and pip
+- Node.js and npm
+- Git
+- A Groq API key if you want to enable AI planning
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/BhanuStackDev/nexapatch-ai.git
+cd nexapatch-ai
+```
+
+### 2. Set Up the Python Backend
+
+Create a virtual environment:
+
+**Windows PowerShell**
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+**macOS / Linux**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+
+Create a local `.env` file from `.env.example`, but only if a `.env` file does not already exist. Preserve your existing local configuration.
+
+**Windows PowerShell**
+
+```powershell
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+}
+```
+
+Open `.env` and review the configuration:
+
+```dotenv
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=qwen/qwen3.8-27b
+GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
+TARGET_REPO_PATH=.
+CONVERSAI_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+Configuration notes:
+
+- `GROQ_API_KEY`: Your private API key. Keep it on the backend.
+- `GROQ_MODEL`: The model identifier configured for planning. Check the provider's current supported-model list and use a model available to your account.
+- `GROQ_API_URL`: The provider's compatible chat-completions endpoint.
+- `TARGET_REPO_PATH`: The local repository or workspace to inspect. `.` refers to the current project root when the backend is launched from that directory.
+- `CONVERSAI_CORS_ORIGINS`: The allowed development frontend origins.
+
+To inspect a different local repository, set `TARGET_REPO_PATH` to its path. Use only repositories you are authorized to inspect.
+
+Do not commit `.env` or place API keys in frontend source files.
+
+### 4. Start the Backend
+
+From the project root, with the Python virtual environment activated:
+
+```bash
+python -m uvicorn agent:app --reload --host 127.0.0.1 --port 8001
+```
+
+The API will be available at:
+
+```text
+http://127.0.0.1:8001
+```
+
+Interactive API documentation:
+
+```text
+http://127.0.0.1:8001/docs
+```
+
+### 5. Start the Frontend
+
+Open a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite, usually:
+
+```text
+http://localhost:5173
+```
+
+The frontend uses `http://127.0.0.1:8001` as its default API URL. To override it, create `frontend/.env.local` with:
+
+```dotenv
+VITE_API_URL=http://127.0.0.1:8001
+```
+
+Restart the frontend development server after changing its environment variables.
+
+## API Endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Check backend and workspace configuration |
+| POST | `/api/run-agent` | Run repository inspection and attempt AI planning when configured |
+| GET | `/api/runs?limit=10` | Retrieve recent execution history |
+| GET | `/docs` | Open interactive API documentation |
+
+### Execution Status
+
+The backend reports the actual execution status:
+
+- `scan_only`: Repository scanning worked, but AI planning was unavailable because the key or required AI configuration was missing.
+- `ai_error`: AI planning encountered an error.
+- A successful AI planning result should only be treated as successful when the returned response confirms it.
+
+Responses also report the read-only state and mutation count. A scan or planning failure must not be interpreted as a successful AI run.
+
+## Testing
+
+### Run Backend Tests
+
+From the project root:
+
+```bash
+python -m pytest -q
+```
+
+The current GitHub `main` version was verified locally with **18 passing backend tests**.
+
+### Build the Frontend
+
+From the project root:
+
+```bash
+cd frontend
+npm run build
+```
+
+This generates the production frontend assets in `frontend/dist/`.
+
+### Audit Frontend Dependencies
+
+From the `frontend` directory:
+
+```bash
+npm audit --audit-level=high
+```
+
+The current checked dependency set returned zero vulnerabilities for this audit level. Dependency advisories can change over time, so run the audit again when updating packages.
+
+## Security and Privacy
+
+NexaPatch AI is currently a local-development portfolio project. Its repository scanner and AI workflow should be used with an understanding of the data being inspected.
+
+- Never commit API keys, tokens, passwords, or private environment files.
+- Common secret-file exclusions and secret-redaction patterns reduce exposure but cannot guarantee that every secret will be detected.
+- Secrets can also occur in ordinary source files, comments, test fixtures, configuration files, or other text.
+- When AI planning is enabled, selected source context may be sent to the configured AI provider. Review the target repository and data-handling requirements before enabling it.
+- Inspect only repositories you are authorized to access.
+- The backend is configured for loopback development. Do not expose it directly to the public internet as-is.
+- Adding `.gitignore` rules does not remove files or secrets already present in Git history. Revoke and rotate any real credentials that were committed.
+
+## Current Scope and Limitations
+
+This release focuses on a reliable read-only foundation for repository inspection and AI-assisted planning.
+
+The following capabilities are **not implemented in the current phase**:
+
+- Automatic source-code editing or patch application
+- Shell command execution
+- Running tests inside a target repository
+- Creating commits or modifying Git branches in a target repository
+- Multi-user authentication and authorization
+- Streaming AI responses
+- Production-hardened public deployment
+
+These capabilities require additional engineering, including sandboxing, explicit authorization, reviewable changes, and stronger operational security.
+
+## Roadmap
+
+Potential next steps include:
+
+- Improve the dashboard with richer scan summaries and file-level context visibility.
+- Expand scanner and secret-redaction regression coverage.
+- Improve error handling and AI-provider configuration feedback.
+- Add a reviewable patch workflow with safe, isolated execution before enabling any write operations.
+- Add authentication, authorization, and deployment hardening before considering remote multi-user use.
+- Continue improving responsive layouts and accessibility.
+
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome.
+
+1. Fork the repository.
+2. Create a focused feature branch.
+3. Make and test your changes.
+4. Open a pull request describing the change and its validation.
+
+Please do not include real secrets, private repository data, or personal credentials in issues, test fixtures, or pull requests.
+
+## License
+
+No license has been specified in this repository yet. Unless a license is added, the default copyright protections apply; do not assume the project is available for unrestricted reuse.
+
+---
+
+### Developed & Designed by Bhnauday Urmaliya
