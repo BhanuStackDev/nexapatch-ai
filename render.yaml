@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: nexapatch-ai-api-bhanu
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn agent:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.15
+      - key: NEXAPATCH_ENV
+        value: production
+      - key: NEXAPATCH_API_TOKEN
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: qwen/qwen3.8-27b
+      - key: TARGET_REPO_PATH
+        value: demo_workspace
+      - key: CONVERSAI_DB_PATH
+        value: /tmp/nexapatch-agent-runs.db
+      - key: CONVERSAI_CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: nexapatch-ai-web-bhanu
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
