@@ -1,6 +1,6 @@
 # NexaPatch AI
 
-### AI-Assisted Repository Inspection & Planning
+## AI-Assisted Repository Inspection & Planning
 
 NexaPatch AI is a developer-focused tool that inspects a local code repository, selects relevant source context, and generates an AI-assisted plan for understanding the codebase. It combines a React dashboard, FastAPI backend, repository scanning, secret-redaction safeguards, and a LangGraph workflow with optional Groq-powered AI planning.
 
@@ -12,7 +12,7 @@ Understanding an unfamiliar repository can be time-consuming. Developers often n
 
 NexaPatch AI provides a foundation for this workflow by scanning a configured local workspace, selecting bounded source context, and presenting the scan and planning results through a web dashboard.
 
-### Key Features
+## Key Features
 
 - **Repository inspection:** Discover relevant files in a configured local workspace.
 - **Read-only scanning:** Inspect a codebase without modifying files in the target repository.
@@ -65,8 +65,8 @@ AI planning requires valid provider configuration. If AI planning is unavailable
              │ Optional provider request
              ▼
 ┌─────────────────────────┐
-│  Groq API / Configured  │
-│       AI Model          │
+│  Groq API / Configured   │
+│       AI Model           │
 └─────────────────────────┘
 
 Local run history → SQLite
@@ -127,7 +127,7 @@ cd nexapatch-ai
 
 ### 2. Set Up the Python Backend
 
-Create a virtual environment:
+Create a virtual environment.
 
 **Windows PowerShell**
 
@@ -254,7 +254,7 @@ From the project root:
 python -m pytest -q
 ```
 
-The current GitHub `main` version was verified locally with **18 passing backend tests**.
+At the time of the latest local verification, the GitHub `main` version passed **18 backend tests**.
 
 ### Build the Frontend
 
@@ -275,7 +275,7 @@ From the `frontend` directory:
 npm audit --audit-level=high
 ```
 
-The current checked dependency set returned zero vulnerabilities for this audit level. Dependency advisories can change over time, so run the audit again when updating packages.
+The last checked dependency set returned zero vulnerabilities for this audit level. Dependency advisories can change over time, so run the audit again when updating packages.
 
 ## Security and Privacy
 
@@ -291,7 +291,7 @@ NexaPatch AI is currently a local-development portfolio project. Its repository 
 
 ## Current Scope and Limitations
 
-This release focuses on a reliable read-only foundation for repository inspection and AI-assisted planning.
+This release focuses on a read-only foundation for repository inspection and AI-assisted planning.
 
 The following capabilities are **not implemented in the current phase**:
 
@@ -332,5 +332,6 @@ Please do not include real secrets, private repository data, or personal credent
 No license has been specified in this repository yet. Unless a license is added, the default copyright protections apply; do not assume the project is available for unrestricted reuse.
 
 ---
+### Developed & Designed by [Bhanuday Urmaliya](https://github.com/BhanuStackDev)
 
-### Developed & Designed by Bhnauday Urmaliya
+[GitHub Repository](https://github.com/BhanuStackDev/nexapatch-ai)
