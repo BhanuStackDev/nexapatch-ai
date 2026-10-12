@@ -6,6 +6,25 @@ NexaPatch AI is a developer-focused tool that inspects a local code repository, 
 
 The current version focuses on **read-only repository inspection and planning**. It does not automatically modify source files or execute shell commands.
 
+
+## Screenshots
+
+Explore the NexaPatch AI workspace and its repository-inspection interface.
+
+<p align="center">
+  <img src="docs/images/dashboard-01.png" alt="NexaPatch AI workspace screenshot 1" width="48%" />
+  <img src="docs/images/dashboard-02.png" alt="NexaPatch AI workspace screenshot 2" width="48%" />
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard-03.png" alt="NexaPatch AI workspace screenshot 3" width="48%" />
+  <img src="docs/images/dashboard-04.png" alt="NexaPatch AI workspace screenshot 4" width="48%" />
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard-05.png" alt="NexaPatch AI workspace screenshot 5" width="75%" />
+</p>
+
 ## Overview
 
 Understanding an unfamiliar repository can be time-consuming. Developers often need to identify important files, understand the project structure, and gather relevant context before planning changes.
