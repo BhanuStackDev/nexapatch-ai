@@ -333,4 +333,4 @@ No license has been specified in this repository yet. Unless a license is added,
 
 ---
 
-### Developed & Designed by Bhnauday Urmaliya
+### Developed & Designed by Bhanuday Urmaliya
