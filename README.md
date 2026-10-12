@@ -273,7 +273,7 @@ From the project root:
 python -m pytest -q
 ```
 
-At the time of the latest local verification, the GitHub `main` version passed **18 backend tests**.
+At the time of the latest local verification, the GitHub `main` version passed **32 backend tests**.
 
 ### Build the Frontend
 
