@@ -8,6 +8,7 @@ import os
 import re
 import re
 import sqlite3
+import tempfile
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 from langgraph.graph import END, START, StateGraph
 
 from repository_scanner import scan_repository
+from github_repository import PublicRepositoryError, materialize_public_github_repository
 from github_auth import get_session_identity, router as github_auth_router
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -166,6 +168,7 @@ class AgentInput(BaseModel):
         max_length=80,
     )
     detected_language: str | None = Field(default=None, max_length=80)
+    repository_url: str | None = Field(default=None, max_length=2_048)
 
 
 class UILocalizationInput(BaseModel):
@@ -272,9 +275,8 @@ def log_run(state: AgentState, status: str, user_id: str = "local") -> int:
             (
                 user_id,
                 state.get("request_text", ""),
-                Path(
-                    state.get("repo_root", TARGET_REPO_PATH)
-                ).name,
+                state.get("workspace_name")
+                or Path(state.get("repo_root", TARGET_REPO_PATH)).name,
                 json.dumps(state.get("discovered_files", [])),
                 json.dumps(state.get("files_in_context", [])),
                 state.get("execution_plan", ""),
@@ -705,18 +707,43 @@ async def run_agent(
             detail="response_language contains invalid control characters.",
         )
 
+    repository_url = (data.repository_url or "").strip()
     try:
-        result = await agent_graph.ainvoke(
-            {
-                "request_text": data.request_text.strip(),
-                "repo_root": str(TARGET_REPO_PATH),
-                "language_mode": language_mode,
-                "response_language": (
-                    response_language if language_mode == "manual" else ""
-                ),
-                "detected_language": (data.detected_language or "").strip(),
-            }
-        )
+        if repository_url:
+            # A public archive lives in a temporary directory, is scanned read-only,
+            # and is deleted automatically when this block exits.
+            with tempfile.TemporaryDirectory(prefix="nexapatch-public-repo-") as workspace:
+                materialized = await materialize_public_github_repository(
+                    repository_url,
+                    Path(workspace),
+                )
+                result = await agent_graph.ainvoke(
+                    {
+                        "request_text": data.request_text.strip(),
+                        "repo_root": str(materialized.root),
+                        "language_mode": language_mode,
+                        "response_language": (
+                            response_language if language_mode == "manual" else ""
+                        ),
+                        "detected_language": (data.detected_language or "").strip(),
+                    }
+                )
+                result["workspace_name"] = materialized.full_name
+        else:
+            result = await agent_graph.ainvoke(
+                {
+                    "request_text": data.request_text.strip(),
+                    "repo_root": str(TARGET_REPO_PATH),
+                    "language_mode": language_mode,
+                    "response_language": (
+                        response_language if language_mode == "manual" else ""
+                    ),
+                    "detected_language": (data.detected_language or "").strip(),
+                }
+            )
+
+    except PublicRepositoryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -754,7 +781,7 @@ async def run_agent(
     return {
         "run_id": run_id,
         "status": status,
-        "workspace_name": Path(
+        "workspace_name": result.get("workspace_name") or Path(
             result.get("repo_root", TARGET_REPO_PATH)
         ).name,
         "repository_summary": result.get("repository_summary", ""),
