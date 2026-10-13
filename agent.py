@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from langgraph.graph import END, START, StateGraph
 
 from repository_scanner import scan_repository
+from github_auth import router as github_auth_router
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT_DIR / ".env")
@@ -104,11 +105,13 @@ app.add_middleware(
         ).split(",")
         if origin.strip()
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
+
+app.include_router(github_auth_router)
 
 class AgentInput(BaseModel):
     request_text: str = Field(min_length=5, max_length=6_000)
