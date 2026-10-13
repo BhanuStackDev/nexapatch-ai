@@ -41,7 +41,7 @@ const NEXAPATCH_UI_LABELS = Array.from(new Set([
   'Inspect a real codebase, map its architecture, and turn your goal into an evidence-based implementation plan.',
   'Connected', 'Agent API', 'Operational', 'FastAPI · Port 8001', 'Configured', 'AI provider',
   'Groq API', 'Enforced', 'Execution policy', 'Read-only', 'Zero code modifications in Phase 1',
-  'PERSISTENT', 'New agent task', 'What should NexaPatch investigate?',
+  'PERSISTENT', 'New agent task', 'Public GitHub repository URL (optional)', 'Only public GitHub repositories are supported. Private repository access is not enabled yet.', 'What should NexaPatch investigate?',
   'Be specific for more relevant file discovery.', 'NexaPatch', 'Repository path validated by backend',
   'Local', 'Run repository analysis',
   'Selected source text is sent to the configured AI provider; review sensitive repositories first.',
@@ -802,6 +802,7 @@ export default function App() {
   const [githubAuth, setGithubAuth] = useState({ checked: false, authenticated: false, user: null });
   const [githubMessage, setGithubMessage] = useState(() => getGithubCallbackMessage());
   const [githubActionBusy, setGithubActionBusy] = useState(false);
+  const [repositoryUrl, setRepositoryUrl] = useState('');
   const [task, setTask] = useState(DEFAULT_TASK);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -1034,7 +1035,7 @@ export default function App() {
       const response = await fetchJson(`${API_BASE}/api/run-agent`, {
         method: 'POST',
         headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        body: JSON.stringify({ request_text: task.trim(), detected_language: nexapatchDetectLanguageFromText(task.trim()) || nexapatchBrowserLanguageName(), language_mode: languageMode, response_language: languageMode === 'manual' ? (responseLanguage.trim() || 'English') : null }),
+        body: JSON.stringify({ request_text: task.trim(), repository_url: repositoryUrl.trim() || null, detected_language: nexapatchDetectLanguageFromText(task.trim()) || nexapatchBrowserLanguageName(), language_mode: languageMode, response_language: languageMode === 'manual' ? (responseLanguage.trim() || 'English') : null }),
       });
       setResult(response);
       await Promise.all([loadHealth(), loadHistory()]);
@@ -1252,6 +1253,31 @@ export default function App() {
             <section className="panel task-panel" id="agent">
               <SectionTitle icon={Command} title="New agent task" trailing={<span className="step-chip">STEP 01 <ArrowRight size={12} /> 02</span>} />
               <form onSubmit={runAgent}>
+                <label className="field-label" htmlFor="repository-url-input">Public GitHub repository URL (optional)</label>
+                <input
+                  id="repository-url-input"
+                  type="url"
+                  value={repositoryUrl}
+                  onChange={(event) => setRepositoryUrl(event.target.value)}
+                  maxLength={2048}
+                  placeholder="https://github.com/owner/repository"
+                  autoComplete="url"
+                  spellCheck={false}
+                  disabled={loading}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    marginBottom: 14,
+                    padding: '12px 14px',
+                    border: '1px solid #c7d0dc',
+                    borderRadius: 8,
+                    color: '#182230',
+                    background: '#ffffff',
+                  }}
+                />
+                <p style={{ margin: '-4px 0 14px', color: '#64748b', fontSize: 12 }}>
+                  Only public GitHub repositories are supported. Private repository access is not enabled yet.
+                </p>
                 <label className="field-label" htmlFor="task-input">What should NexaPatch investigate?</label>
                 <textarea id="task-input" value={task} onChange={(event) => setTask(event.target.value)} maxLength={6000} placeholder="Example: Trace the login flow and identify the most important security gaps..." rows={7} disabled={loading}
                   onKeyDown={(event) => {
@@ -1264,7 +1290,7 @@ export default function App() {
                   }}
                 />
                 <div className="prompt-meta"><span>Be specific for more relevant file discovery.</span><span>{task.length.toLocaleString()} / 6,000</span></div>
-                <div className="task-context"><div className="context-icon"><FolderGit2 size={16} /></div><div className="context-copy"><strong>{health?.workspace_name || 'Configured repository'}</strong><span>{health?.workspace_configured ? 'Repository path validated by backend' : 'Waiting for backend configuration'}</span></div><span className="context-badge"><Check size={12} /> Local</span></div>
+                <div className="task-context"><div className="context-icon"><FolderGit2 size={16} /></div><div className="context-copy"><strong>{repositoryUrl.trim() || health?.workspace_name || 'Configured repository'}</strong><span>{repositoryUrl.trim() ? 'Public GitHub repository; backend validation required' : health?.workspace_configured ? 'Repository path validated by backend' : 'Waiting for backend configuration'}</span></div><span className="context-badge"><Check size={12} /> {repositoryUrl.trim() ? 'GitHub' : 'Local'}</span></div>
                 <button className="primary-button" type="submit" disabled={loading || !apiOnline || task.trim().length < 5}>{loading ? <><LoaderCircle className="spin" size={17} /> Inspecting repository...</> : <><Play size={16} fill="currentColor" /> Run repository analysis <ArrowRight size={16} /></>}</button>
                 <p className="privacy-note"><ShieldCheck size={13} /> Selected source text is sent to the configured AI provider; review sensitive repositories first.</p>
               </form>
