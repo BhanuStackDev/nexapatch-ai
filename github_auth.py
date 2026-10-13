@@ -140,6 +140,15 @@ def _read_session(request: Request) -> dict[str, Any] | None:
     return payload
 
 
+def get_session_identity(request: Request) -> dict[str, Any] | None:
+    """Return a token-free identity from a valid encrypted GitHub session."""
+    payload = _read_session(request)
+    if payload is None:
+        return None
+    user = payload["user"]
+    return {"user_id": str(user["id"]), "login": user["login"]}
+
+
 def _delete_session_cookie(response: JSONResponse) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE,
