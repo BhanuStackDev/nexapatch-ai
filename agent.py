@@ -9,6 +9,7 @@ import re
 import re
 import sqlite3
 import tempfile
+import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,14 +17,14 @@ from typing import Any, Literal, TypedDict
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from langgraph.graph import END, START, StateGraph
 
 from repository_scanner import scan_repository
 from github_repository import PublicRepositoryError, materialize_public_github_repository
-from github_auth import get_session_identity, router as github_auth_router
+from github_auth import get_or_create_guest_identity, get_session_identity, router as github_auth_router
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT_DIR / ".env")
@@ -81,12 +82,13 @@ def require_api_token(
 
 async def require_api_identity(
     request: Request,
+    response: Response,
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    """Authenticate a request with the legacy bearer token or a GitHub session.
+    """Authenticate bearer, GitHub, or server-signed guest identities.
 
-    Run history is scoped by this identity. Cookie-authenticated state-changing
-    API requests additionally require the exact configured frontend Origin.
+    Cookie-authenticated state-changing requests in production require the exact
+    configured frontend Origin to mitigate cross-site request forgery.
     """
     if authorization and NEXAPATCH_API_TOKEN:
         scheme, separator, candidate = authorization.partition(" ")
@@ -111,6 +113,17 @@ async def require_api_identity(
             if not expected_origin or request_origin != expected_origin:
                 raise HTTPException(status_code=403, detail="Request origin is not allowed.")
         return {"user_id": session_user["user_id"], "auth_method": "github"}
+
+    # Guest access is opt-in; explicitly enable it in staging/production when ready.
+    guests_enabled = os.getenv("NEXAPATCH_GUEST_ACCESS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    if guests_enabled:
+        if NEXAPATCH_ENV in {"production", "prod"} and request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            expected_origin = os.getenv("NEXAPATCH_FRONTEND_URL", "").strip().rstrip("/")
+            request_origin = request.headers.get("origin", "").strip().rstrip("/")
+            if not expected_origin or request_origin != expected_origin:
+                raise HTTPException(status_code=403, detail="Request origin is not allowed.")
+        guest_id = get_or_create_guest_identity(request, response)
+        return {"user_id": f"guest:{guest_id}", "auth_method": "guest"}
 
     if NEXAPATCH_API_TOKEN:
         raise HTTPException(
@@ -245,7 +258,88 @@ def init_database() -> None:
                 "ADD COLUMN response_language TEXT NOT NULL DEFAULT 'auto'"
             )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_quota_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quota_subject_created "
+            "ON analysis_quota_events(subject_id, created_at)"
+        )
+
         connection.commit()
+
+
+ANALYSIS_QUOTA_WINDOW_SECONDS = 24 * 60 * 60
+ANALYSIS_QUOTA_RETENTION_SECONDS = 7 * 24 * 60 * 60
+
+
+def reserve_analysis_quota(user_id: str, auth_method: str) -> None:
+    """Atomically reserve one analysis attempt in the rolling 24-hour window.
+
+    Accepted attempts consume a slot even if repository retrieval or AI processing
+    later fails; this keeps repeated expensive failures from bypassing limits.
+    """
+    is_guest = auth_method == "guest"
+    variable = "NEXAPATCH_GUEST_ANALYSES_PER_24H" if is_guest else "NEXAPATCH_USER_ANALYSES_PER_24H"
+    default_limit = "3" if is_guest else "20"
+    try:
+        limit = int(os.getenv(variable, default_limit).strip())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Analysis quota is not configured correctly.") from exc
+    if limit < 1 or limit > 100000:
+        raise HTTPException(status_code=503, detail="Analysis quota is not configured correctly.")
+
+    now = time.time()
+    cutoff = now - ANALYSIS_QUOTA_WINDOW_SECONDS
+    try:
+        init_database()
+        with sqlite3.connect(DB_PATH, timeout=10) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM analysis_quota_events WHERE created_at < ?",
+                (now - ANALYSIS_QUOTA_RETENTION_SECONDS,),
+            )
+            used, oldest = connection.execute(
+                "SELECT COUNT(*), MIN(created_at) FROM analysis_quota_events "
+                "WHERE subject_id = ? AND created_at > ?",
+                (user_id, cutoff),
+            ).fetchone()
+            if int(used) >= limit:
+                retry_after = max(1, int(float(oldest or now) + ANALYSIS_QUOTA_WINDOW_SECONDS - now))
+                connection.rollback()
+                subject = "Guest" if is_guest else "Account"
+                detail = (
+                    f"{subject} analysis limit reached ({limit} analyses per rolling 24 hours). "
+                    "Sign in with GitHub or try again after the quota window resets."
+                    if is_guest
+                    else f"Account analysis limit reached ({limit} analyses per rolling 24 hours). Try again after the quota window resets."
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail=detail,
+                    headers={"Retry-After": str(retry_after)},
+                )
+            connection.execute(
+                "INSERT INTO analysis_quota_events(subject_id, created_at) VALUES (?, ?)",
+                (user_id, now),
+            )
+            connection.commit()
+    except HTTPException:
+        raise
+    except sqlite3.Error as exc:
+        # Fail closed: never run an expensive analysis if quota reservation could
+        # not be recorded. Avoid returning local filesystem/database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Usage limits are temporarily unavailable. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        ) from exc
 
 
 def log_run(state: AgentState, status: str, user_id: str = "local") -> int:
@@ -706,6 +800,8 @@ async def run_agent(
             status_code=422,
             detail="response_language contains invalid control characters.",
         )
+
+    reserve_analysis_quota(identity["user_id"], identity.get("auth_method", "account"))
 
     repository_url = (data.repository_url or "").strip()
     try:

@@ -1009,7 +1009,13 @@ export default function App() {
     }
   }, [apiToken]);
 
-  useEffect(() => { loadHealth(); loadHistory(); loadGithubSession(); }, [loadHealth, loadHistory, loadGithubSession]);
+  useEffect(() => {
+    loadHealth();
+    void (async () => {
+      await loadGithubSession();
+      await loadHistory();
+    })();
+  }, [loadHealth, loadHistory, loadGithubSession]);
 
   useEffect(() => {
     const callbackUrl = new URL(window.location.href);

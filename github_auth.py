@@ -1,4 +1,4 @@
-﻿"""GitHub App OAuth endpoints for NexaPatch.
+"""GitHub App OAuth endpoints for NexaPatch.
 
 OAuth tokens are kept inside an authenticated, encrypted, HttpOnly cookie; they
 are never returned to JavaScript. API routes continue to require the existing
@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
 router = APIRouter(tags=["GitHub authentication"])
@@ -147,6 +147,66 @@ def get_session_identity(request: Request) -> dict[str, Any] | None:
         return None
     user = payload["user"]
     return {"user_id": str(user["id"]), "login": user["login"]}
+
+
+GUEST_COOKIE = "nexapatch_guest"
+GUEST_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def _guest_signing_key() -> bytes:
+    """Derive a purpose-specific key without exposing it to browser JavaScript."""
+    secret = _env("NEXAPATCH_SESSION_SECRET")
+    if len(secret) < 32:
+        if _secure_cookie():
+            raise ValueError("A session secret of at least 32 characters is required for guest cookies.")
+        secret = "local-development-only-nexapatch-guest-cookie-secret"
+    return hashlib.sha256(("nexapatch-guest-cookie-v1:" + secret).encode("utf-8")).digest()
+
+
+def _guest_cookie_signature(guest_id: str, issued_at: int) -> str:
+    message = f"{guest_id}.{issued_at}".encode("ascii")
+    signature = hmac.new(_guest_signing_key(), message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+
+
+def _read_guest_identity(request: Request) -> str | None:
+    value = request.cookies.get(GUEST_COOKIE, "")
+    try:
+        guest_id, raw_issued_at, supplied_signature = value.split(".", 2)
+        issued_at = int(raw_issued_at)
+        now = int(time.time())
+        if not guest_id or issued_at > now + 300 or issued_at < now - GUEST_COOKIE_MAX_AGE:
+            return None
+        expected_signature = _guest_cookie_signature(guest_id, issued_at)
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return None
+        return guest_id
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _write_guest_cookie(response: Response, guest_id: str) -> None:
+    issued_at = int(time.time())
+    value = f"{guest_id}.{issued_at}.{_guest_cookie_signature(guest_id, issued_at)}"
+    response.set_cookie(
+        key=GUEST_COOKIE,
+        value=value,
+        max_age=GUEST_COOKIE_MAX_AGE,
+        path="/",
+        secure=_secure_cookie(),
+        httponly=True,
+        samesite=_session_samesite(),
+    )
+
+
+def get_or_create_guest_identity(request: Request, response: Response) -> str:
+    """Return the verified guest ID, creating a signed browser cookie if needed."""
+    existing = _read_guest_identity(request)
+    if existing is not None:
+        return existing
+    guest_id = secrets.token_urlsafe(24)
+    _write_guest_cookie(response, guest_id)
+    return guest_id
 
 
 def _delete_session_cookie(response: JSONResponse) -> None:
@@ -343,7 +403,12 @@ async def auth_me(request: Request) -> JSONResponse:
     """Return the current authenticated GitHub identity, never OAuth tokens."""
     payload = _read_session(request)
     if payload is None:
-        return _unauthenticated_response(clear_cookie=bool(request.cookies.get(SESSION_COOKIE)))
+        response = _unauthenticated_response(clear_cookie=bool(request.cookies.get(SESSION_COOKIE)))
+        # Guest access is opt-in so a missing environment variable never silently opens the API.
+        guests_enabled = _env("NEXAPATCH_GUEST_ACCESS_ENABLED").lower() in {"1", "true", "yes", "on"}
+        if guests_enabled:
+            get_or_create_guest_identity(request, response)
+        return response
 
     expires_at = payload.get("access_token_expires_at")
     now = int(time.time())
