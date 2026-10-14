@@ -10,6 +10,7 @@ const DEFAULT_TASK = 'Analyze this repository, explain its architecture, and ide
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
+    credentials: 'include',
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
@@ -40,7 +41,7 @@ const NEXAPATCH_UI_LABELS = Array.from(new Set([
   'Inspect a real codebase, map its architecture, and turn your goal into an evidence-based implementation plan.',
   'Connected', 'Agent API', 'Operational', 'FastAPI · Port 8001', 'Configured', 'AI provider',
   'Groq API', 'Enforced', 'Execution policy', 'Read-only', 'Zero code modifications in Phase 1',
-  'PERSISTENT', 'New agent task', 'What should NexaPatch investigate?',
+  'PERSISTENT', 'New agent task', 'Public GitHub repository URL (optional)', 'Only public GitHub repositories are supported. Private repository access is not enabled yet.', 'What should NexaPatch investigate?',
   'Be specific for more relevant file discovery.', 'NexaPatch', 'Repository path validated by backend',
   'Local', 'Run repository analysis',
   'Selected source text is sent to the configured AI provider; review sensitive repositories first.',
@@ -766,6 +767,31 @@ function NexaPatchWelcomeAndExit({ translations = {} }) {
   );
 }
 
+function getGithubCallbackMessage() {
+  if (typeof window === 'undefined') return '';
+
+  const callbackUrl = new URL(window.location.href);
+  const outcome = callbackUrl.searchParams.get('github_login');
+  const reason = callbackUrl.searchParams.get('reason');
+
+  if (!outcome) return '';
+  if (outcome === 'success') {
+    return 'GitHub authorization completed. Verifying your session...';
+  }
+
+  const messages = {
+    authorization_denied: 'GitHub authorization was cancelled.',
+    invalid_state: 'The GitHub security check failed. Please try signing in again.',
+    auth_not_configured: 'GitHub sign-in is not configured on the backend yet.',
+    token_exchange_failed: 'GitHub could not complete authorization. Please try again.',
+    profile_fetch_failed: 'Could not retrieve your GitHub profile.',
+    github_request_failed: 'Could not contact GitHub. Please try again.',
+    profile_invalid: 'GitHub returned an invalid profile.',
+    session_creation_failed: 'Could not create a secure session. Please try again.',
+  };
+  return messages[reason] || 'GitHub sign-in failed. Please try again.';
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   // NEXAPATCH_SESSION_TOKEN_UI_V1
@@ -773,6 +799,10 @@ export default function App() {
   const [apiToken, setApiToken] = useState('');
   const [apiTokenInput, setApiTokenInput] = useState('');
   const [authMessage, setAuthMessage] = useState('');
+  const [githubAuth, setGithubAuth] = useState({ checked: false, authenticated: false, user: null });
+  const [githubMessage, setGithubMessage] = useState(() => getGithubCallbackMessage());
+  const [githubActionBusy, setGithubActionBusy] = useState(false);
+  const [repositoryUrl, setRepositoryUrl] = useState('');
   const [task, setTask] = useState(DEFAULT_TASK);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -867,6 +897,7 @@ export default function App() {
 
         const response = await fetch(`${API_BASE}/api/localize-ui`, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json; charset=utf-8',
             ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
@@ -920,6 +951,49 @@ export default function App() {
     }
   }, []);
 
+  const loadGithubSession = useCallback(async () => {
+    try {
+      const response = await fetchJson(`${API_BASE}/auth/me`);
+      const authenticated = Boolean(response.authenticated && response.user);
+      setGithubAuth({
+        checked: true,
+        authenticated,
+        user: authenticated ? response.user : null,
+      });
+      if (authenticated) {
+        setGithubMessage(`Connected to GitHub as @${response.user.login}.`);
+      }
+    } catch {
+      setGithubAuth({ checked: true, authenticated: false, user: null });
+    }
+  }, []);
+
+  const startGithubLogin = () => {
+    window.location.assign(`${API_BASE}/auth/github/login`);
+  };
+
+  const logoutGithub = async () => {
+    if (githubActionBusy) return;
+    setGithubActionBusy(true);
+    try {
+      await fetchJson(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      setGithubAuth({ checked: true, authenticated: false, user: null });
+      setApiToken('');
+      setApiTokenInput('');
+      setHistory([]);
+      setResult(null);
+      setGithubMessage('You have signed out of GitHub.');
+      setAuthMessage('');
+    } catch (err) {
+      setGithubMessage(err.message || 'Could not sign out. Please try again.');
+    } finally {
+      setGithubActionBusy(false);
+    }
+  };
+
   const loadHistory = useCallback(async () => {
     try {
       const response = await fetchJson(`${API_BASE}/api/runs?limit=6`, {
@@ -935,13 +1009,28 @@ export default function App() {
     }
   }, [apiToken]);
 
-  useEffect(() => { loadHealth(); loadHistory(); }, [loadHealth, loadHistory]);
+  useEffect(() => {
+    loadHealth();
+    void (async () => {
+      await loadGithubSession();
+      await loadHistory();
+    })();
+  }, [loadHealth, loadHistory, loadGithubSession]);
+
+  useEffect(() => {
+    const callbackUrl = new URL(window.location.href);
+    if (!callbackUrl.searchParams.has('github_login')) return;
+
+    callbackUrl.searchParams.delete('github_login');
+    callbackUrl.searchParams.delete('reason');
+    window.history.replaceState({}, document.title, `${callbackUrl.pathname}${callbackUrl.search}${callbackUrl.hash}`);
+  }, []);
 
   const runAgent = async (event) => {
     event.preventDefault();
     if (task.trim().length < 5 || loading) return;
-    if (health?.auth_required && !apiToken) {
-      setError('Enter the backend access token above before running analyses.');
+    if (health?.auth_required && !apiToken && !githubAuth.authenticated) {
+      setError('Sign in with GitHub or use the legacy backend access token before running analyses.');
       return;
     }
     setLoading(true);
@@ -952,7 +1041,7 @@ export default function App() {
       const response = await fetchJson(`${API_BASE}/api/run-agent`, {
         method: 'POST',
         headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        body: JSON.stringify({ request_text: task.trim(), detected_language: nexapatchDetectLanguageFromText(task.trim()) || nexapatchBrowserLanguageName(), language_mode: languageMode, response_language: languageMode === 'manual' ? (responseLanguage.trim() || 'English') : null }),
+        body: JSON.stringify({ request_text: task.trim(), repository_url: repositoryUrl.trim() || null, detected_language: nexapatchDetectLanguageFromText(task.trim()) || nexapatchBrowserLanguageName(), language_mode: languageMode, response_language: languageMode === 'manual' ? (responseLanguage.trim() || 'English') : null }),
       });
       setResult(response);
       await Promise.all([loadHealth(), loadHistory()]);
@@ -1009,7 +1098,54 @@ export default function App() {
         </header>
 
         <div className="page-container">
-          {health?.auth_required && (
+          <section
+            aria-label="GitHub account"
+            style={{
+              marginBottom: 18,
+              padding: 14,
+              border: '1px solid #d6deea',
+              borderRadius: 12,
+              background: '#ffffff',
+              color: '#182230',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Code2 size={20} />
+                <div>
+                  <strong>{githubAuth.authenticated ? `Signed in as @${githubAuth.user?.login || 'GitHub user'}` : 'GitHub account'}</strong>
+                  <div style={{ color: '#526174', fontSize: 12, marginTop: 3 }}>
+                    {githubAuth.authenticated ? 'GitHub session active' : githubAuth.checked ? 'Not signed in to GitHub' : 'Checking GitHub session...'}
+                  </div>
+                </div>
+              </div>
+              {githubAuth.authenticated ? (
+                <button
+                  type="button"
+                  onClick={logoutGithub}
+                  disabled={githubActionBusy}
+                  style={{ padding: '10px 14px', border: '1px solid #c7d0dc', borderRadius: 8, background: '#ffffff', color: '#182230', cursor: githubActionBusy ? 'wait' : 'pointer' }}
+                >
+                  {githubActionBusy ? 'Signing out...' : 'Sign out'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startGithubLogin}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 14px', border: 0, borderRadius: 8, background: '#182230', color: '#ffffff', cursor: 'pointer' }}
+                >
+                  <Code2 size={16} /> Login with GitHub
+                </button>
+              )}
+            </div>
+            {githubMessage && <p role="status" style={{ margin: '10px 0 0', fontSize: 13 }}>{githubMessage}</p>}
+            {!githubAuth.authenticated && (
+              <p style={{ margin: '8px 0 0', color: '#526174', fontSize: 12 }}>
+                GitHub sign-in creates an authenticated session. Guest repository analysis is not enabled yet.
+              </p>
+            )}
+          </section>
+          {health?.auth_required && githubAuth.checked && !githubAuth.authenticated && (
             <section
               aria-label="Backend access"
               style={{
@@ -1123,6 +1259,31 @@ export default function App() {
             <section className="panel task-panel" id="agent">
               <SectionTitle icon={Command} title="New agent task" trailing={<span className="step-chip">STEP 01 <ArrowRight size={12} /> 02</span>} />
               <form onSubmit={runAgent}>
+                <label className="field-label" htmlFor="repository-url-input">Public GitHub repository URL (optional)</label>
+                <input
+                  id="repository-url-input"
+                  type="url"
+                  value={repositoryUrl}
+                  onChange={(event) => setRepositoryUrl(event.target.value)}
+                  maxLength={2048}
+                  placeholder="https://github.com/owner/repository"
+                  autoComplete="url"
+                  spellCheck={false}
+                  disabled={loading}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    marginBottom: 14,
+                    padding: '12px 14px',
+                    border: '1px solid #c7d0dc',
+                    borderRadius: 8,
+                    color: '#182230',
+                    background: '#ffffff',
+                  }}
+                />
+                <p style={{ margin: '-4px 0 14px', color: '#64748b', fontSize: 12 }}>
+                  Only public GitHub repositories are supported. Private repository access is not enabled yet.
+                </p>
                 <label className="field-label" htmlFor="task-input">What should NexaPatch investigate?</label>
                 <textarea id="task-input" value={task} onChange={(event) => setTask(event.target.value)} maxLength={6000} placeholder="Example: Trace the login flow and identify the most important security gaps..." rows={7} disabled={loading}
                   onKeyDown={(event) => {
@@ -1135,7 +1296,7 @@ export default function App() {
                   }}
                 />
                 <div className="prompt-meta"><span>Be specific for more relevant file discovery.</span><span>{task.length.toLocaleString()} / 6,000</span></div>
-                <div className="task-context"><div className="context-icon"><FolderGit2 size={16} /></div><div className="context-copy"><strong>{health?.workspace_name || 'Configured repository'}</strong><span>{health?.workspace_configured ? 'Repository path validated by backend' : 'Waiting for backend configuration'}</span></div><span className="context-badge"><Check size={12} /> Local</span></div>
+                <div className="task-context"><div className="context-icon"><FolderGit2 size={16} /></div><div className="context-copy"><strong>{repositoryUrl.trim() || health?.workspace_name || 'Configured repository'}</strong><span>{repositoryUrl.trim() ? 'Public GitHub repository; backend validation required' : health?.workspace_configured ? 'Repository path validated by backend' : 'Waiting for backend configuration'}</span></div><span className="context-badge"><Check size={12} /> {repositoryUrl.trim() ? 'GitHub' : 'Local'}</span></div>
                 <button className="primary-button" type="submit" disabled={loading || !apiOnline || task.trim().length < 5}>{loading ? <><LoaderCircle className="spin" size={17} /> Inspecting repository...</> : <><Play size={16} fill="currentColor" /> Run repository analysis <ArrowRight size={16} /></>}</button>
                 <p className="privacy-note"><ShieldCheck size={13} /> Selected source text is sent to the configured AI provider; review sensitive repositories first.</p>
               </form>

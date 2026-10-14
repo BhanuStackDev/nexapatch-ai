@@ -306,6 +306,7 @@ def test_sensitive_routes_reject_missing_bearer_token(
     monkeypatch.setattr(
         agent_module, "NEXAPATCH_API_TOKEN", "deployment-test-token"
     )
+    monkeypatch.setenv("NEXAPATCH_GUEST_ACCESS_ENABLED", "false")
 
     response = getattr(client, method)(
         path,
